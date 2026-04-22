@@ -1,4 +1,4 @@
-// Package logging provides structured logging for the application.
+// Package logging provides structured logging for the Media service.
 // It configures a JSON-formatted logger using slog and httplog,
 // producing ECS-compatible log output suitable for log aggregation systems.
 package logging
@@ -16,7 +16,7 @@ func New() *slog.Logger {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		ReplaceAttr: logFormat.ReplaceAttr,
 	})).With(
-		slog.String("service", "blueprint-service"),
+		slog.String("service", "media-service"),
 		slog.String("version", "v0.0.1"),
 		slog.String("env", "development"),
 	)

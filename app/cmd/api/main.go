@@ -29,51 +29,50 @@ func main() {
 		os.Exit(1)
 	}
 
-	//create logger
+	// Create logger
 	l := logging.New()
-	l.Info("App initiated")
+	l.Info("Media service initiated")
 
-	//db connection
+	// Database connection
 	db, err := database.NewConn(os.Getenv("DATABASE_URL"))
 	if err != nil {
-		l.Error("Conection to database failed", "err", err)
-		os.Exit(-1)
+		l.Error("connection to database failed", "err", err)
+		os.Exit(1)
 	}
-	l.Info("Database connection successful")
-
+	l.Info("database connection successful")
 	defer db.Close()
 
-	err = database.RunMigrations(os.Getenv("DATABASE_URL"), l)
-	if err != nil {
-		os.Exit(-1)
+	if err := database.RunMigrations(os.Getenv("DATABASE_URL"), l); err != nil {
+		os.Exit(1)
 	}
 
-	//jwt key file check
-	if _, err := os.Stat(privateKeyPath); os.IsNotExist(err) {
-		l.Error("JWT private key file not found", "err", err)
-		os.Exit(-1)
-	}
-	//jwt key file check
-	if _, err := os.Stat(publicKeyPath); os.IsNotExist(err) {
-		l.Error("JWT public key file not found", "err", err)
-		os.Exit(-1)
+	// JWT key file checks
+	for _, path := range []string{privateKeyPath, publicKeyPath} {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			l.Error("JWT key file not found", "path", path)
+			os.Exit(1)
+		}
 	}
 
-	//repo creation
-	r := repo.NewDatabaseRepo(db)
+	// S3 HTTP client — talks to the MinIO service via its REST API
+	s3 := repo.NewS3HTTPRepo(cfg.MinIOService.URL, cfg.MinIOService.Bucket)
+	l.Info("S3 HTTP client created", "url", cfg.MinIOService.URL, "bucket", cfg.MinIOService.Bucket)
 
-	//service creation
-	svc := service.New(l, r)
+	// Database repository
+	dbRepo := repo.NewDatabaseRepo(db)
 
-	// handler creation
+	// Service
+	svc := service.New(l, dbRepo, s3)
+
+	// Handler
 	jwtConfig := handler.JWTConfig{
-		Issuer:     "blueprint-service",
+		Issuer:     "media-service",
 		Expiration: 24 * time.Minute,
 	}
 	jwtAuth := handler.NewJWTAuthenticator(jwtConfig, privateKeyPath, publicKeyPath)
-	h := handler.New(svc, l, jwtAuth)
+	h := handler.New(svc, l, jwtAuth, cfg.MinIOService.Bucket)
 
-	// server creation
+	// HTTP server
 	mux := h.NewServerMux(nil)
 	port := cfg.Server.Port
 	if port == 0 {
@@ -84,7 +83,7 @@ func main() {
 		Handler: mux,
 	}
 
-	l.Info("Server listening", "addr", srv.Addr)
+	l.Info("server listening", "addr", srv.Addr)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			l.Error("server failed", "err", err)
@@ -92,21 +91,17 @@ func main() {
 		}
 	}()
 
-	// Block until SIGTERM or SIGINT
+	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 	<-quit
 
-	l.Info("Shutting down server...")
-
-	// Give in-flight requests 30s to finish
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	l.Info("shutting down server...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		l.Error("Server forced to shutdown", "err", err)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		l.Error("server forced to shutdown", "err", err)
 	}
-
-	l.Info("Server stopped")
-
+	l.Info("server stopped")
 }

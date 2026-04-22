@@ -1,4 +1,23 @@
-// Package models defines domain data structures used across the application.
-// All entities, DTOs, and shared types should be defined here
-// to ensure consistency between repository, service, and handler layers.
 package models
+
+import "io"
+
+// DownloadResult holds the streaming body and metadata for a downloaded object.
+type DownloadResult struct {
+	Body        io.ReadCloser `json:"-"`
+	ContentType string        `json:"content_type"`
+	Size        int64         `json:"size"`
+	FileName    string        `json:"file_name"`
+}
+
+// UploadResponse is returned after a successful file upload.
+type UploadResponse struct {
+	Bucket string `json:"bucket"`
+	Key    string `json:"key"`
+}
+
+// S3UploadResponse mirrors the response from the MinIO service's POST /upload.
+type S3UploadResponse struct {
+	Bucket string `json:"bucket"`
+	Key    string `json:"key"`
+}

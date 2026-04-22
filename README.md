@@ -1,210 +1,172 @@
-# Hotel Microservice Blueprint
+# Media Microservice
 
-A lightweight Go microservice built with a clean architecture pattern, featuring PostgreSQL integration, structured logging, JWT authentication, rate limiting, circuit breaker pattern, and HTTP request handling via `chi` router.
+The **Media Service** is the central image-management layer of the HIC Hotel platform. It owns the PostgreSQL database that tracks image metadata and delegates all object storage to a separate **MinIO Service** via its HTTP API.
 
 ## Architecture
 
-The project follows a layered architecture:
-
 ```
-cmd/api/main.go → Entry point, wires dependencies
-internal/handler → HTTP handlers, routing, and middleware
-internal/service → Business logic layer
-internal/repo → Data access layer
-internal/database → Database connection management
-internal/logging → Structured logging setup
-internal/models → Domain models
-internal/helper → Utility functions
-internal/config → YAML configuration loader
-```
-
-## Tech Stack
-
-- **Router**: [go-chi/chi/v5](https://github.com/go-chi/chi)
-- **Logging**: [go-chi/httplog/v3](https://github.com/go-chi/httplog) + `log/slog`
-- **Database**: [jackc/pgx/v5](https://github.com/jackc/pgx) (PostgreSQL connection pool)
-- **JWT Authentication**: [golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt)
-- **Validation**: [go-playground/validator/v10](https://github.com/go-playground/validator)
-- **Password Hashing**: [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto)
-- **UUID Generation**: [google/uuid](https://github.com/google/uuid)
-
-## Features
-
-### Security
-- **JWT Authentication**: RSA-based token validation with configurable issuer and expiration
-- **Security Headers**: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, HSTS, CSP
-- **Request ID**: Unique request tracking for debugging and logging
-
-### Resilience
-- **Rate Limiting**: Token bucket algorithm with configurable requests/second and burst
-- **Circuit Breaker**: Automatic failure detection with half-open state for recovery
-- **Graceful Shutdown**: 30-second timeout for in-flight requests
-
-### Configuration
-- **YAML Config**: All settings loaded from `config.yaml` with environment variable expansion
-- **No hardcoded values**: Server port, timeouts, rate limits all configurable
-
-## Prerequisites
-
-- Go 1.25.7+
-- PostgreSQL database
-- Docker & Docker Compose (optional, for local development)
-- RSA key pair for JWT signing (`public.pem`, `private.pem`)
-
-## Getting Started
-
-### 1. Generate JWT Keys
-
-```bash
-# Generate private key
-openssl genrsa -out private.pem 2048
-
-# Generate public key
-openssl rsa -in private.pem -pubout -out public.pem
+┌──────────────┐     ┌─────────────────┐     ┌─────────────┐
+│  Servicio A  │────▶│  Media Service  │────▶│MinIO Service│────▶ MinIO Container
+│  (Hotel API) │     │  (this repo)    │     │ (separate)  │
+└──────────────┘     │                 │     └─────────────┘
+┌──────────────┐     │  PostgreSQL     │
+│  Servicio B  │────▶│  (image URLs)   │
+│  (Room API)  │     └─────────────────┘
+└──────────────┘              │
+                              ▼
+                        ┌───────────┐
+                        │ SQL Server│
+                        └───────────┘
 ```
 
-### 2. Set Environment Variables
+### Responsibilities
 
-```bash
-export DATABASE_URL="postgres://user:password@localhost:5432/dbname?sslmode=disable"
-```
+| Concern | Owner |
+|---------|-------|
+| File upload / download / bucket management | **MinIO Service** (separate codebase) |
+| Image metadata (hotel_images, room_images) | **Media Service** (this repo) |
+| Object key generation & validation | **Media Service** |
+| Pre-signed URL generation (future) | **Media Service** |
+| Resizing / validation (future) | **Media Service** |
 
-### 3. Configure the Service
+### Communication with MinIO Service
 
-Edit `config.yaml` to customize:
-- Server host/port and timeouts
-- Logging level and format
-- Rate limiting parameters
-- Circuit breaker settings
-- Health check paths
+The Media Service does **not** use the MinIO Go SDK directly. Instead, it communicates with the MinIO Service through its REST API over HTTP:
 
-### 4. Run the Service
+| Action | Method | Endpoint | Description |
+|--------|--------|----------|-------------|
+| Upload | `POST` | `/upload` | Multipart form-data with `file` field. Returns `{ "bucket": "...", "key": "..." }` |
+| Download | `GET` | `/download/{bucket}/{key}` | Streams the object with `Content-Type` and `Content-Disposition` headers |
+| Health | `GET` | `/health` | Returns `{ "status": "ok" }` |
+| Ready | `GET` | `/ready` | Returns `{ "status": "ready" }` |
 
-```bash
-go run app/cmd/api/main.go
-```
+The S3 HTTP client is implemented in [`app/internal/repo/S3_repo.go`](app/internal/repo/S3_repo.go) and uses Go's standard `net/http` package with piped streaming for uploads.
 
-The server starts on `localhost:8080` (or configured port).
+## Database Schema
 
-### 5. Test the Health Endpoint
+### `hotel_images`
 
-```bash
-curl http://localhost:8080/health
-```
+Stores S3 object references for hotel images. Object keys follow the pattern `hotels/{hotelID}/{timestamp}-{filename}`.
 
-Response:
-```json
-{"status": "ok"}
-```
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `BIGSERIAL` | Primary key |
+| `hotel_id` | `UUID` | Foreign key to hotel |
+| `object_key` | `TEXT` | S3 object key (unique) |
+| `content_type` | `TEXT` | MIME type |
+| `file_size` | `BIGINT` | Size in bytes |
+| `created_at` | `TIMESTAMPTZ` | Upload timestamp |
 
-## Docker
+### `room_images`
 
-### Build the Image
+Stores S3 object references for room images. Object keys follow the pattern `rooms/{roomID}/{timestamp}-{filename}`.
 
-```bash
-docker build -t microservice-blueprint .
-```
-
-### Run with Docker
-
-```bash
-docker run -p 8080:8080 \
-  -e DATABASE_URL="postgres://user:password@host:5432/dbname?sslmode=disable" \
-  -v /path/to/keys:/app/keys \
-  microservice-blueprint
-```
-
-### Docker Compose
-
-Use `docker-compose.yml` to spin up dependencies (e.g., PostgreSQL):
-
-```bash
-docker-compose up -d
-```
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `BIGSERIAL` | Primary key |
+| `room_id` | `UUID` | Foreign key to room |
+| `object_key` | `TEXT` | S3 object key (unique) |
+| `content_type` | `TEXT` | MIME type |
+| `file_size` | `BIGINT` | Size in bytes |
+| `created_at` | `TIMESTAMPTZ` | Upload timestamp |
 
 ## Project Structure
 
-| Path | Description |
-|------|-------------|
-| `app/cmd/api/main.go` | Application entry point. Wires together database, repository, service, and handler layers, then starts the HTTP server. |
-| `app/internal/config/` | YAML configuration loader with environment variable expansion. |
-| `app/internal/database/` | Database connection pool initialization using `pgx`. |
-| `app/internal/handler/` | HTTP handlers, request routing (`chi`), and middleware (security, JWT, rate limiting). |
-| `app/internal/service/` | Business logic layer. Defines service interfaces and implements use cases. |
-| `app/internal/repo/` | Data access layer. Handles all database queries and transactions. |
-| `app/internal/logging/` | Structured JSON logger configuration using `slog` and `httplog`. |
-| `app/internal/models/` | Domain models and data structures shared across layers. |
-| `app/internal/helper/` | Utility/helper functions including comprehensive error definitions. |
-| `app/sql/` | SQL migration files and queries. |
-| `config.yaml` | Service configuration file. |
-| `Dockerfile` | Multi-stage Docker build with healthcheck. |
+```
+.
+├── app/
+│   ├── cmd/api/
+│   │   └── main.go                  # Application entry point
+│   └── internal/
+│       ├── config/config.go         # Configuration loading (YAML + env vars)
+│       ├── database/
+│       │   ├── db.go                # PostgreSQL connection pool (pgx)
+│       │   └── migration.go         # Embedded migration runner (golang-migrate)
+│       ├── handler/
+│       │   ├── handlers.go          # HTTP handlers (upload, download, health)
+│       │   ├── routing.go           # Chi router setup
+│       │   └── middleware.go        # JWT auth, rate limiting, CORS, security headers
+│       ├── helper/
+│       │   ├── util.go              # Error responses, error mapping, env helpers
+│       │   └── validator.go         # Request validation (go-playground/validator)
+│       ├── logging/logger.go        # Structured JSON logger (slog + httplog)
+│       ├── models/models.go         # Data models (DownloadResult, UploadResponse)
+│       ├── repo/
+│       │   ├── repo.go              # ServiceRepository + S3Repository interfaces
+│       │   └── S3_repo.go           # S3 HTTP client (talks to MinIO Service)
+│       └── service/service.go       # Business logic layer
+├── app/sql/
+│   ├── efs.go                       # Embedded filesystem for migrations
+│   └── migrations/
+│       ├── 001_create_table.up/down.sql
+│       ├── 001_hotel.up/down.sql
+│       └── 002_s3_images.up/down.sql
+├── config.yaml                      # Service configuration
+├── Dockerfile                       # Multi-stage Docker build
+├── go.mod / go.sum                  # Go module definition
+└── archived-service/                # Original monolithic codebase (preserved for reference)
+```
 
-## API Endpoints
+## Configuration
 
-### Public Routes (No Authentication)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check endpoint. Returns service health status. |
-| `GET` | `/ready` | Readiness check. Verifies database connectivity. |
-
-### Protected Routes (JWT Required)
-
-Add protected endpoints in the protected route group in `routing.go`.
-
-## Configuration Reference
-
-### config.yaml
+The service is configured via [`config.yaml`](config.yaml) with environment variable expansion:
 
 ```yaml
 server:
   host: "0.0.0.0"
   port: 8080
-  read_timeout: 15s
-  write_timeout: 15s
-  idle_timeout: 60s
 
-logging:
-  level: "info"
-  format: "json"
-
-rate_limit:
-  enabled: true
-  requests_per_second: 100
-  burst: 200
-
-circuit_breaker:
-  enabled: true
-  max_failures: 5
-  timeout: 30s
-
-health:
-  path: "/health"
-  ready_path: "/ready"
+minio_service:
+  url: "http://minio-service:8080"   # Base URL of the MinIO Service
+  bucket: "media"                     # Default bucket name
 ```
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string (required) |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string (e.g. `postgres://user:pass@localhost:5432/media`) |
+| `MINIO_ACCESS_KEY` | No | Only needed by the MinIO Service, not this service |
+| `MINIO_SECRET_KEY` | No | Only needed by the MinIO Service, not this service |
 
-## Adding New Features
+## API Endpoints
 
-1. **Models**: Define structs in `app/internal/models/models.go`
-2. **Repository**: Add data access methods to `app/internal/repo/repo.go`
-3. **Service**: Add business logic methods to `app/internal/service/service.go` (update the `Service` interface)
-4. **Handler**: Add HTTP handler functions to `app/internal/handler/handlers.go`
-5. **Routing**: Register new routes in `app/internal/handler/routing.go`
-6. **Configuration**: Add any new config options to `config.yaml` and `app/internal/config/config.go`
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Liveness probe |
+| `GET` | `/ready` | No | Readiness probe (checks DB) |
+| `POST` | `/upload` | No | Upload a file (multipart form-data, `file` field) |
+| `GET` | `/download/{bucket}/{key}` | No | Download a file by bucket and key |
+| *TBD* | *Protected routes* | JWT | Future authenticated endpoints |
 
-## Error Handling
+## Running
 
-The service uses a comprehensive error system defined in `app/internal/helper/util.go`:
+### Local Development
 
-- **General errors**: `ErrInternalServer`, `ErrUnauthorized`, `ErrForbidden`, `ErrNotFound`, etc.
-- **Database errors**: `ErrDBConnection`, `ErrDBQuery`, `ErrRecordNotFound`, `ErrDuplicateEntry`, etc.
-- **Authentication errors**: `ErrInvalidCredentials`, `ErrInvalidToken`, `ErrTokenExpired`, etc.
-- **Service errors**: `ErrServiceUnavailable`, `ErrCreateFailed`, `ErrProcessingFailed`, etc.
+```bash
+# Set required environment variables
+export DATABASE_URL="postgres://user:pass@localhost:5432/media?sslmode=disable"
 
-Use `helper.MapError()` in the repository layer to convert raw database errors to application sentinel errors.
+# Run the service
+go run ./app/cmd/api
+```
+
+### Docker
+
+```bash
+docker build -t media-service .
+docker run -e DATABASE_URL="postgres://..." media-service
+```
+
+## Dependencies
+
+| Dependency | Purpose |
+|------------|---------|
+| `go-chi/chi/v5` | HTTP router |
+| `go-chi/httplog/v3` | Structured HTTP logging |
+| `golang-jwt/jwt/v5` | JWT authentication middleware |
+| `golang-migrate/migrate/v4` | Database migrations |
+| `jackc/pgx/v5` | PostgreSQL driver (connection pool) |
+| `go-playground/validator/v10` | Request validation |
+| `gopkg.in/yaml.v3` | YAML config parsing |
+

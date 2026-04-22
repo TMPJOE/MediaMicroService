@@ -1,4 +1,4 @@
-# API Gateway Configuration
+# Media Service Configuration
 server:
   host: "0.0.0.0"
   port: 8080
@@ -24,3 +24,8 @@ circuit_breaker:
 health:
   path: "/health"
   ready_path: "/ready"
+
+# MinIO Service configuration (HTTP API, not direct SDK)
+minio_service:
+  url: "http://minio-service:8080"  # Base URL of the separate MinIO service
+  bucket: "media"                     # Default bucket name

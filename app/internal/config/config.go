@@ -30,15 +30,22 @@ type Health struct {
 	ReadyPath string `yaml:"ready_path"`
 }
 
+// MinIOService holds the configuration for connecting to the MinIO service
+// via its HTTP API (not direct MinIO SDK access).
+type MinIOService struct {
+	URL    string `yaml:"url"`    // Base URL of the MinIO service (e.g. "http://minio-service:8080")
+	Bucket string `yaml:"bucket"` // Default bucket name to use for uploads
+}
+
 type Config struct {
 	Server         Server                 `yaml:"server"`
 	Logging        map[string]interface{} `yaml:"logging"`
 	RateLimit      map[string]interface{} `yaml:"rate_limit"`
 	CircuitBreaker map[string]interface{} `yaml:"circuit_breaker"`
 	Health         Health                 `yaml:"health"`
+	MinIOService   MinIOService           `yaml:"minio_service"`
 }
 
-// Load reads a YAML config file, expands environment variables, and returns the parsed config.
 func Load(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
