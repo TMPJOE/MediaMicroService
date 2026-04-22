@@ -43,12 +43,6 @@ func (h *Handler) NewServerMux(rateLimiter *RateLimiter) *chi.Mux {
 		r.Get("/download/{bucket}/{key}", h.downloadFile)
 	})
 
-	// Protected routes — require JWT authentication
-	r.Group(func(r chi.Router) {
-		r.Use(h.jwtAuth.Middleware())
-		// Add authenticated routes here
-	})
-
 	return r
 }
 
