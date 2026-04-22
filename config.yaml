@@ -25,7 +25,12 @@ health:
   path: "/health"
   ready_path: "/ready"
 
+# JWT configuration — this service only validates tokens (public key).
+# Tokens are issued by the UsersMicroService using the matching private key.
+jwt:
+  issuer: "users-service"
+
 # MinIO Service configuration (HTTP API, not direct SDK)
 minio_service:
-  url: "http://minio-service:8080"  # Base URL of the separate MinIO service
-  bucket: "media"                     # Default bucket name
+  url: "http://minio-service:8080" # Base URL of the separate MinIO service
+  bucket: "media" # Default bucket name

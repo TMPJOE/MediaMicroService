@@ -22,6 +22,7 @@ type contextKey string
 const (
 	UserIDKey    contextKey = "user_id"
 	UserEmailKey contextKey = "user_email"
+	UserTypeKey  contextKey = "user_type"
 	ClaimsKey    contextKey = "claims"
 )
 
@@ -32,10 +33,12 @@ type JWTConfig struct {
 	Expiration time.Duration
 }
 
-// JWTClaims represents the JWT claims structure
+// JWTClaims represents the JWT claims structure.
+// Must match the claims issued by the UsersMicroService.
 type JWTClaims struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
+	UserID   string `json:"user_id"`
+	Email    string `json:"email"`
+	UserType string `json:"user_type"`
 	jwt.RegisteredClaims
 }
 
@@ -186,30 +189,36 @@ func CacheControl(maxAge int) func(http.Handler) http.Handler {
 	}
 }
 
-// JWTAuthenticator handles JWT authentication
-type JWTAuthenticator struct {
-	config     JWTConfig
-	publicKey  map[string]*rsa.PublicKey
-	privateKey *rsa.PrivateKey
+// JWTValidator handles JWT token validation using the public key only.
+// Unlike the UsersMicroService JWTAuthenticator, this service does NOT
+// issue tokens — it only validates tokens signed by the users-service.
+type JWTValidator struct {
+	config    JWTConfig
+	publicKey map[string]*rsa.PublicKey
 }
 
-// NewJWTAuthenticator creates a new JWT authenticator
-func NewJWTAuthenticator(config JWTConfig, privateKeyPath, publicKeyPath string) *JWTAuthenticator {
-	publicKeyData, _ := os.ReadFile(publicKeyPath)
-	privateKeyData, _ := os.ReadFile(privateKeyPath)
+// NewJWTValidator creates a new JWT validator that only reads the public key.
+// The public key must correspond to the private key used by the UsersMicroService
+// to sign tokens.
+func NewJWTValidator(config JWTConfig, publicKeyPath string) *JWTValidator {
+	publicKeyData, err := os.ReadFile(publicKeyPath)
+	if err != nil {
+		panic("failed to read JWT public key: " + err.Error())
+	}
 
-	privateKey, _ := jwt.ParseRSAPrivateKeyFromPEM(privateKeyData)
-	publicKey, _ := jwt.ParseRSAPublicKeyFromPEM(publicKeyData)
+	publicKey, err := jwt.ParseRSAPublicKeyFromPEM(publicKeyData)
+	if err != nil {
+		panic("failed to parse JWT public key: " + err.Error())
+	}
 
-	return &JWTAuthenticator{
-		config:     config,
-		publicKey:  map[string]*rsa.PublicKey{"key-1": publicKey},
-		privateKey: privateKey,
+	return &JWTValidator{
+		config:    config,
+		publicKey: map[string]*rsa.PublicKey{"key-1": publicKey},
 	}
 }
 
 // Middleware returns the JWT authentication middleware
-func (j *JWTAuthenticator) Middleware() func(http.Handler) http.Handler {
+func (j *JWTValidator) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -239,6 +248,7 @@ func (j *JWTAuthenticator) Middleware() func(http.Handler) http.Handler {
 			// Add claims to request context
 			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 			ctx = context.WithValue(ctx, UserEmailKey, claims.Email)
+			ctx = context.WithValue(ctx, UserTypeKey, claims.UserType)
 			ctx = context.WithValue(ctx, ClaimsKey, claims)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -246,8 +256,9 @@ func (j *JWTAuthenticator) Middleware() func(http.Handler) http.Handler {
 	}
 }
 
-// ValidateToken validates a JWT token and returns the claims
-func (j *JWTAuthenticator) ValidateToken(tokenString string) (*JWTClaims, error) {
+// ValidateToken validates a JWT token and returns the claims.
+// Tokens must be signed by the UsersMicroService using RS256.
+func (j *JWTValidator) ValidateToken(tokenString string) (*JWTClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		kid, ok := token.Header["kid"].(string)
 		if !ok {
@@ -262,8 +273,7 @@ func (j *JWTAuthenticator) ValidateToken(tokenString string) (*JWTClaims, error)
 			return nil, helper.ErrInvalidToken
 		}
 		return key, nil
-	},
-		jwt.WithAudience("booking-api"),
+	}, jwt.WithAudience("booking-api"),
 		jwt.WithIssuer(j.config.Issuer),
 		jwt.WithLeeway(5*time.Second),
 	)
@@ -281,26 +291,6 @@ func (j *JWTAuthenticator) ValidateToken(tokenString string) (*JWTClaims, error)
 	}
 
 	return claims, nil
-}
-
-// GenerateToken generates a new JWT token for a user
-func (j *JWTAuthenticator) GenerateToken(userID, email string) (string, error) {
-	claims := JWTClaims{
-		UserID: userID,
-		Email:  email,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    j.config.Issuer,
-			Audience:  []string{"booking-api"},
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(j.config.Expiration)),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "key-1"
-
-	return token.SignedString(j.privateKey)
 }
 
 // CORS middleware
@@ -322,16 +312,27 @@ func CORS(next http.Handler) http.Handler {
 
 // GetUserIDFromContext extracts user ID from the request context
 func GetUserIDFromContext(ctx context.Context) string {
-	if userID, ok := ctx.Value(UserIDKey).(string); ok {
-		return userID
+	claims := GetClaimsFromContext(ctx)
+	if claims != nil {
+		return claims.UserID
 	}
 	return ""
 }
 
 // GetUserEmailFromContext extracts user email from the request context
 func GetUserEmailFromContext(ctx context.Context) string {
-	if email, ok := ctx.Value(UserEmailKey).(string); ok {
-		return email
+	claims := GetClaimsFromContext(ctx)
+	if claims != nil {
+		return claims.Email
+	}
+	return ""
+}
+
+// GetUserTypeFromContext extracts user type from the request context
+func GetUserTypeFromContext(ctx context.Context) string {
+	claims := GetClaimsFromContext(ctx)
+	if claims != nil {
+		return claims.UserType
 	}
 	return ""
 }

@@ -37,16 +37,13 @@ func (h *Handler) NewServerMux(rateLimiter *RateLimiter) *chi.Mux {
 		r.Get("/ready", h.readinessCheck)
 	})
 
-	// Media routes — file upload / download
-	r.Group(func(r chi.Router) {
-		r.Post("/upload", h.uploadFile)
-		r.Get("/download/{bucket}/{key}", h.downloadFile)
-	})
-
 	// Protected routes — require JWT authentication
 	r.Group(func(r chi.Router) {
 		r.Use(h.jwtAuth.Middleware())
-		// Add authenticated routes here
+
+		// Media routes — file upload / download (authenticated)
+		r.Post("/upload", h.uploadFile)
+		r.Get("/download/{bucket}/{key}", h.downloadFile)
 	})
 
 	return r

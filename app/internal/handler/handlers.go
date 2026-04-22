@@ -19,12 +19,12 @@ import (
 type Handler struct {
 	s       service.Service
 	l       *slog.Logger
-	jwtAuth *JWTAuthenticator
+	jwtAuth *JWTValidator
 	bucket  string // default bucket name
 }
 
 // New constructs a Handler.
-func New(s service.Service, l *slog.Logger, jwtAuth *JWTAuthenticator, bucket string) *Handler {
+func New(s service.Service, l *slog.Logger, jwtAuth *JWTValidator, bucket string) *Handler {
 	return &Handler{
 		s:       s,
 		l:       l,

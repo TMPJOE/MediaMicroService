@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	publicKeyPath  = "/app/keys/public.pem"
-	privateKeyPath = "/app/keys/private.pem"
+	publicKeyPath = "/app/keys/public.pem"
 )
 
 func main() {
@@ -46,12 +45,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// JWT key file checks
-	for _, path := range []string{privateKeyPath, publicKeyPath} {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			l.Error("JWT key file not found", "path", path)
-			os.Exit(1)
-		}
+	// JWT public key file check
+	if _, err := os.Stat(publicKeyPath); os.IsNotExist(err) {
+		l.Error("JWT public key file not found", "path", publicKeyPath)
+		os.Exit(1)
 	}
 
 	// S3 HTTP client — talks to the MinIO service via its REST API
@@ -64,13 +61,13 @@ func main() {
 	// Service
 	svc := service.New(l, dbRepo, s3)
 
-	// Handler
+	// JWT validator — only needs the public key to validate tokens
+	// issued by the UsersMicroService.
 	jwtConfig := handler.JWTConfig{
-		Issuer:     "media-service",
-		Expiration: 24 * time.Minute,
+		Issuer: cfg.JWT.Issuer,
 	}
-	jwtAuth := handler.NewJWTAuthenticator(jwtConfig, privateKeyPath, publicKeyPath)
-	h := handler.New(svc, l, jwtAuth, cfg.MinIOService.Bucket)
+	jwtValidator := handler.NewJWTValidator(jwtConfig, publicKeyPath)
+	h := handler.New(svc, l, jwtValidator, cfg.MinIOService.Bucket)
 
 	// HTTP server
 	mux := h.NewServerMux(nil)

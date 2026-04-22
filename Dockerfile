@@ -37,11 +37,9 @@ COPY --from=builder /app/api .
 # Copy configuration
 COPY config.yaml .
 
-# Copy JWT keys directory (keys should be mounted at runtime)
+# Copy JWT keys directory (only public key is mounted at runtime;
+# the private key is NOT needed — this service only validates tokens).
 RUN mkdir -p /app/keys && chown -R appuser:appuser /app
-
-# Change ownership
-RUN chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser

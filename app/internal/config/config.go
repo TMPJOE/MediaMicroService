@@ -43,6 +43,7 @@ type Config struct {
 	RateLimit      map[string]interface{} `yaml:"rate_limit"`
 	CircuitBreaker map[string]interface{} `yaml:"circuit_breaker"`
 	Health         Health                 `yaml:"health"`
+	JWT            JWT                    `yaml:"jwt"`
 	MinIOService   MinIOService           `yaml:"minio_service"`
 }
 
