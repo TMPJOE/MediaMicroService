@@ -32,8 +32,13 @@ func main() {
 	l := logging.New()
 	l.Info("Media service initiated")
 
-	// Database connection
-	db, err := database.NewConn(os.Getenv("DATABASE_URL"))
+	// Database connection (require DATABASE_URL)
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		l.Error("DATABASE_URL not set; define MEDIA_SERVICE_DATABASE_URL in Infra/.env and map it to DATABASE_URL in docker-compose")
+		os.Exit(1)
+	}
+	db, err := database.NewConn(dbURL)
 	if err != nil {
 		l.Error("connection to database failed", "err", err)
 		os.Exit(1)
@@ -41,7 +46,7 @@ func main() {
 	l.Info("database connection successful")
 	defer db.Close()
 
-	if err := database.RunMigrations(os.Getenv("DATABASE_URL"), l); err != nil {
+	if err := database.RunMigrations(dbURL, l); err != nil {
 		os.Exit(1)
 	}
 
@@ -61,7 +66,7 @@ func main() {
 	// Service
 	svc := service.New(l, dbRepo, s3)
 
-	// JWT validator — only needs the public key to validate tokens
+	// JWT validator
 	// issued by the UsersMicroService.
 	jwtConfig := handler.JWTConfig{
 		Issuer: cfg.JWT.Issuer,
