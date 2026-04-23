@@ -29,7 +29,7 @@ func main() {
 	l.Info("Media service initiated")
 
 	// Database connection
-	db, err := database.NewConn(os.Getenv("MEDIA_SERVICE_DATABASE_URL"))
+	db, err := database.NewConn(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		l.Error("connection to database failed", "err", err)
 		os.Exit(1)
@@ -37,7 +37,7 @@ func main() {
 	l.Info("database connection successful")
 	defer db.Close()
 
-	if err := database.RunMigrations(os.Getenv("MEDIA_SERVICE_DATABASE_URL"), l); err != nil {
+	if err := database.RunMigrations(os.Getenv("DATABASE_URL"), l); err != nil {
 		os.Exit(1)
 	}
 

@@ -93,15 +93,19 @@ func (s *mediaService) UploadFile(ctx context.Context, bucket, filename, ownerTy
 
 	// Persist metadata in DB when owner info is provided.
 	if ownerType == "hotel" && ownerID != "" {
+		s.l.Info("saving hotel image metadata", "hotel_id", ownerID, "key", actualKey)
 		if _, err := s.db.SaveHotelImage(ctx, ownerID, bucket, actualKey, contentType, size); err != nil {
-			s.l.Error("failed to save hotel image metadata", "err", err)
+			s.l.Error("failed to save hotel image metadata", "hotel_id", ownerID, "err", err)
 			return nil, err
 		}
 	} else if ownerType == "room" && ownerID != "" {
+		s.l.Info("saving room image metadata", "room_id", ownerID, "key", actualKey)
 		if _, err := s.db.SaveRoomImage(ctx, ownerID, bucket, actualKey, contentType, size); err != nil {
-			s.l.Error("failed to save room image metadata", "err", err)
+			s.l.Error("failed to save room image metadata", "room_id", ownerID, "err", err)
 			return nil, err
 		}
+	} else {
+		s.l.Warn("upload has no owner, metadata not saved", "ownerType", ownerType, "ownerID", ownerID, "key", actualKey)
 	}
 
 	s.l.Info("file uploaded", "bucket", bucket, "key", actualKey)
@@ -131,13 +135,14 @@ func (s *mediaService) DownloadFile(ctx context.Context, bucket, key string) (*m
 func (s *mediaService) ListHotelImages(ctx context.Context, hotelID string) ([]string, error) {
 	records, err := s.db.GetHotelImages(ctx, hotelID)
 	if err != nil {
-		s.l.Error("failed to query hotel images", "err", err)
+		s.l.Error("failed to query hotel images", "hotel_id", hotelID, "err", err)
 		return nil, err
 	}
-	var urls []string
+	urls := make([]string, 0, len(records))
 	for _, r := range records {
 		urls = append(urls, s.s3.BuildDownloadURL(r.Bucket, r.Key))
 	}
+	s.l.Info("listed hotel images", "hotel_id", hotelID, "count", len(urls))
 	return urls, nil
 }
 
@@ -145,12 +150,13 @@ func (s *mediaService) ListHotelImages(ctx context.Context, hotelID string) ([]s
 func (s *mediaService) ListRoomImages(ctx context.Context, roomID string) ([]string, error) {
 	records, err := s.db.GetRoomImages(ctx, roomID)
 	if err != nil {
-		s.l.Error("failed to query room images", "err", err)
+		s.l.Error("failed to query room images", "room_id", roomID, "err", err)
 		return nil, err
 	}
-	var urls []string
+	urls := make([]string, 0, len(records))
 	for _, r := range records {
 		urls = append(urls, s.s3.BuildDownloadURL(r.Bucket, r.Key))
 	}
+	s.l.Info("listed room images", "room_id", roomID, "count", len(urls))
 	return urls, nil
 }
