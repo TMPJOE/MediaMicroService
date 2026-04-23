@@ -40,7 +40,9 @@ func (h *Handler) NewServerMux(rateLimiter *RateLimiter) *chi.Mux {
 	// Media routes — file upload / download
 	r.Group(func(r chi.Router) {
 		r.Post("/upload", h.uploadFile)
-		r.Get("/download/{bucket}/{key}", h.downloadFile)
+		r.Get("/download/{bucket}/*", h.downloadFile)
+		r.Get("/hotels/{hotel_id}/images", h.listHotelImages)
+		r.Get("/rooms/{room_id}/images", h.listRoomImages)
 	})
 
 	return r

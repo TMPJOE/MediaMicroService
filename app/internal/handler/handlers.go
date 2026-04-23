@@ -17,19 +17,17 @@ import (
 
 // Handler holds shared dependencies for all HTTP handlers.
 type Handler struct {
-	s       service.Service
-	l       *slog.Logger
-	jwtAuth *JWTAuthenticator
-	bucket  string // default bucket name
+	s      service.Service
+	l      *slog.Logger
+	bucket string // default bucket name
 }
 
 // New constructs a Handler.
-func New(s service.Service, l *slog.Logger, jwtAuth *JWTAuthenticator, bucket string) *Handler {
+func New(s service.Service, l *slog.Logger, bucket string) *Handler {
 	return &Handler{
-		s:       s,
-		l:       l,
-		jwtAuth: jwtAuth,
-		bucket:  bucket,
+		s:      s,
+		l:      l,
+		bucket: bucket,
 	}
 }
 
@@ -75,7 +73,18 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
-	resp, err := h.s.UploadFile(r.Context(), h.bucket, header.Filename, file, header.Size, contentType)
+	// Determine owner metadata (optional): hotel_id or room_id
+	ownerType := ""
+	ownerID := ""
+	if hv := r.FormValue("hotel_id"); hv != "" {
+		ownerType = "hotel"
+		ownerID = hv
+	} else if rv := r.FormValue("room_id"); rv != "" {
+		ownerType = "room"
+		ownerID = rv
+	}
+
+	resp, err := h.s.UploadFile(r.Context(), h.bucket, header.Filename, ownerType, ownerID, file, header.Size, contentType)
 	if err != nil {
 		h.l.Error("uploadFile service error", "err", err)
 		helper.RespondError(w, http.StatusInternalServerError, helper.ErrProcessingFailed.Error())
@@ -91,7 +100,7 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 // Streams the object directly to the client with the correct Content-Type.
 func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
-	key := chi.URLParam(r, "key")
+	key := chi.URLParam(r, "*")
 
 	if bucket == "" || key == "" {
 		helper.RespondError(w, http.StatusBadRequest, "bucket and key path parameters are required")
@@ -116,4 +125,42 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, result.Body); err != nil {
 		h.l.Error("streaming file to client failed", "err", err)
 	}
+}
+
+// listHotelImages returns an array of download URLs for the given hotel ID.
+func (h *Handler) listHotelImages(w http.ResponseWriter, r *http.Request) {
+	hotelID := chi.URLParam(r, "hotel_id")
+	if hotelID == "" {
+		helper.RespondError(w, http.StatusBadRequest, "hotel_id path parameter is required")
+		return
+	}
+	urls, err := h.s.ListHotelImages(r.Context(), hotelID)
+	if err != nil {
+		h.l.Error("listHotelImages failed", "err", err)
+		helper.RespondError(w, http.StatusInternalServerError, helper.ErrProcessingFailed.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"images": urls})
+}
+
+// listRoomImages returns an array of download URLs for the given room ID.
+func (h *Handler) listRoomImages(w http.ResponseWriter, r *http.Request) {
+	roomID := chi.URLParam(r, "room_id")
+	if roomID == "" {
+		helper.RespondError(w, http.StatusBadRequest, "room_id path parameter is required")
+		return
+	}
+	urls, err := h.s.ListRoomImages(r.Context(), roomID)
+	if err != nil {
+		h.l.Error("listRoomImages failed", "err", err)
+		helper.RespondError(w, http.StatusInternalServerError, helper.ErrProcessingFailed.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"images": urls})
 }

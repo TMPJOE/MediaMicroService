@@ -1,0 +1,5 @@
+ALTER TABLE hotel_images ADD COLUMN IF NOT EXISTS bucket TEXT NOT NULL DEFAULT 'media';
+ALTER TABLE hotel_images ADD COLUMN IF NOT EXISTS content_type TEXT NOT NULL DEFAULT 'image/jpeg';
+
+ALTER TABLE room_images ADD COLUMN IF NOT EXISTS bucket TEXT NOT NULL DEFAULT 'media';
+ALTER TABLE room_images ADD COLUMN IF NOT EXISTS content_type TEXT NOT NULL DEFAULT 'image/jpeg';

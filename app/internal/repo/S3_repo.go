@@ -29,7 +29,7 @@ func NewS3HTTPRepo(baseURL, defaultBucket string) S3Repository {
 }
 
 // UploadFile forwards a file upload to the MinIO service's POST /upload endpoint.
-func (r *s3HTTPRepo) UploadFile(ctx context.Context, bucketName, objectName string, file io.Reader, size int64, contentType string) error {
+func (r *s3HTTPRepo) UploadFile(ctx context.Context, bucketName, objectName string, file io.Reader, size int64, contentType string) (string, error) {
 	// Build a pipe so we can stream the file body into the HTTP request
 	// while also setting the Content-Type multipart form.
 	pr, pw := io.Pipe()
@@ -46,29 +46,29 @@ func (r *s3HTTPRepo) UploadFile(ctx context.Context, bucketName, objectName stri
 	url := fmt.Sprintf("%s/upload", r.baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
 	if err != nil {
-		return fmt.Errorf("create upload request: %w", err)
+		return "", fmt.Errorf("create upload request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.formContentType())
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("upload request to minio-service: %w", err)
+		return "", fmt.Errorf("upload request to minio-service: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("minio-service upload failed (status %d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("minio-service upload failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	// Decode the response to confirm the bucket/key match
 	var result models.S3UploadResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		// Non-fatal: the upload succeeded even if we can't parse the response
-		return nil
+		return objectName, nil
 	}
 
-	return nil
+	return result.Key, nil
 }
 
 // DownloadFile retrieves a file from the MinIO service's GET /download/{bucket}/{key} endpoint.
@@ -119,6 +119,11 @@ func (r *s3HTTPRepo) DownloadFile(ctx context.Context, bucketName, objectName st
 		Size:        size,
 		FileName:    fileName,
 	}, nil
+}
+
+// BuildDownloadURL returns the relative HTTP URL for downloading an object via the Media service.
+func (r *s3HTTPRepo) BuildDownloadURL(bucketName, objectName string) string {
+	return fmt.Sprintf("/download/%s/%s", bucketName, objectName)
 }
 
 func parseContentLength(s string) (int64, error) {

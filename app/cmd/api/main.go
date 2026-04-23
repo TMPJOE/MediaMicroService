@@ -17,11 +17,6 @@ import (
 	"hotel.com/app/internal/service"
 )
 
-const (
-	publicKeyPath  = "/app/keys/public.pem"
-	privateKeyPath = "/app/keys/private.pem"
-)
-
 func main() {
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
@@ -46,14 +41,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// JWT key file checks
-	for _, path := range []string{privateKeyPath, publicKeyPath} {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			l.Error("JWT key file not found", "path", path)
-			os.Exit(1)
-		}
-	}
-
 	// S3 HTTP client — talks to the MinIO service via its REST API
 	s3 := repo.NewS3HTTPRepo(cfg.MinIOService.URL, cfg.MinIOService.Bucket)
 	l.Info("S3 HTTP client created", "url", cfg.MinIOService.URL, "bucket", cfg.MinIOService.Bucket)
@@ -65,12 +52,7 @@ func main() {
 	svc := service.New(l, dbRepo, s3)
 
 	// Handler
-	jwtConfig := handler.JWTConfig{
-		Issuer:     "media-service",
-		Expiration: 24 * time.Minute,
-	}
-	jwtAuth := handler.NewJWTAuthenticator(jwtConfig, privateKeyPath, publicKeyPath)
-	h := handler.New(svc, l, jwtAuth, cfg.MinIOService.Bucket)
+	h := handler.New(svc, l, cfg.MinIOService.Bucket)
 
 	// HTTP server
 	mux := h.NewServerMux(nil)

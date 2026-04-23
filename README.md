@@ -53,6 +53,7 @@ Stores S3 object references for hotel images. Object keys follow the pattern `ho
 | `id` | `BIGSERIAL` | Primary key |
 | `hotel_id` | `UUID` | Foreign key to hotel |
 | `object_key` | `TEXT` | S3 object key (unique) |
+| `bucket` | `TEXT` | S3 bucket name (defaults to `media`) |
 | `content_type` | `TEXT` | MIME type |
 | `file_size` | `BIGINT` | Size in bytes |
 | `created_at` | `TIMESTAMPTZ` | Upload timestamp |
@@ -66,6 +67,7 @@ Stores S3 object references for room images. Object keys follow the pattern `roo
 | `id` | `BIGSERIAL` | Primary key |
 | `room_id` | `UUID` | Foreign key to room |
 | `object_key` | `TEXT` | S3 object key (unique) |
+| `bucket` | `TEXT` | S3 bucket name (defaults to `media`) |
 | `content_type` | `TEXT` | MIME type |
 | `file_size` | `BIGINT` | Size in bytes |
 | `created_at` | `TIMESTAMPTZ` | Upload timestamp |
@@ -137,6 +139,42 @@ minio_service:
 | `GET` | `/ready` | No | Readiness probe (checks DB) |
 | `POST` | `/upload` | No | Upload a file (multipart form-data, `file` field) |
 | `GET` | `/download/{bucket}/{key}` | No | Download a file by bucket and key |
+| `GET` | `/hotels/{hotel_id}/images` | No | List download URLs for images attached to `hotel_id` |
+| `GET` | `/rooms/{room_id}/images` | No | List download URLs for images attached to `room_id` |
+
+## Usage Examples
+
+Upload an image and associate it with a hotel (multipart form-data, include `hotel_id`):
+
+```bash
+curl -X POST "http://localhost:8080/upload" \
+  -F "file=@/path/to/photo.jpg" \
+  -F "hotel_id=123e4567-e89b-12d3-a456-426614174000"
+```
+
+Upload an image for a room (include `room_id`):
+
+```bash
+curl -X POST "http://localhost:8080/upload" \
+  -F "file=@/path/to/photo.jpg" \
+  -F "room_id=9a8b7c6d-1234-5678-90ab-cdef12345678"
+```
+
+List images for a hotel (returns array of download URLs):
+
+```bash
+curl "http://localhost:8080/hotels/123e4567-e89b-12d3-a456-426614174000/images"
+```
+
+Download a specific image (streamed via the MinIO service wrapper):
+
+```bash
+curl -O "http://localhost:8080/download/media/hotels/123e4567-e89b-12d3-a456-426614174000/1616161616-photo.jpg"
+```
+
+Notes:
+- The upload endpoint returns `{ "bucket": "media", "key": "..." }`. The service also persists the `bucket`+`key` to the DB when `hotel_id` or `room_id` is provided.
+- Listing endpoints return fully-qualified download URLs built against the configured MinIO service base URL (from `minio_service.url` in `config.yaml`).
 | *TBD* | *Protected routes* | JWT | Future authenticated endpoints |
 
 ## Running
