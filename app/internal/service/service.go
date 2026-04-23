@@ -56,7 +56,7 @@ func (s *mediaService) Check() error {
 // UploadFile validates the input, generates the object key, and forwards
 // the file to the MinIO service for storage.
 // The object key is sanitised to prevent path traversal.
-func (s *mediaService) UploadFile(ctx context.Context, bucket, filename, ownerType, ownerID string, file io.Reader, size int64, contentType string) (*models.UploadResponse, error) {
+func (s *mediaService) UploadFile(ctx context.Context, bucket, filename, assetType, assetID string, file io.Reader, size int64, contentType string) (*models.UploadResponse, error) {
 	if strings.TrimSpace(bucket) == "" {
 		return nil, fmt.Errorf("bucket name must not be empty")
 	}
@@ -70,19 +70,19 @@ func (s *mediaService) UploadFile(ctx context.Context, bucket, filename, ownerTy
 	// Build object key with optional owner prefixes.
 	now := time.Now().UnixNano()
 	var key string
-	switch ownerType {
+	switch assetType {
 	case "hotel":
-		if ownerID == "" {
+		if assetID == "" {
 			return nil, fmt.Errorf("hotel_id is required when ownerType=hotel")
 		}
-		key = fmt.Sprintf("hotels/%s/%d-%s", ownerID, now, base)
+		key = fmt.Sprintf("hotels/%s/%d-%s", assetID, now, base)
 	case "room":
-		if ownerID == "" {
+		if assetID == "" {
 			return nil, fmt.Errorf("room_id is required when ownerType=room")
 		}
-		key = fmt.Sprintf("rooms/%s/%d-%s", ownerID, now, base)
+		key = fmt.Sprintf("rooms/%s/%d-%s", assetID, now, base)
 	default:
-		key = fmt.Sprintf("%d-%s", now, base)
+		return nil, fmt.Errorf("invalid ownerType: must be 'hotel' or 'room'")
 	}
 
 	actualKey, err := s.s3.UploadFile(ctx, bucket, key, file, size, contentType)
@@ -92,20 +92,20 @@ func (s *mediaService) UploadFile(ctx context.Context, bucket, filename, ownerTy
 	}
 
 	// Persist metadata in DB when owner info is provided.
-	if ownerType == "hotel" && ownerID != "" {
-		s.l.Info("saving hotel image metadata", "hotel_id", ownerID, "key", actualKey)
-		if _, err := s.db.SaveHotelImage(ctx, ownerID, bucket, actualKey, contentType, size); err != nil {
-			s.l.Error("failed to save hotel image metadata", "hotel_id", ownerID, "err", err)
+	if assetType == "hotel" && assetID != "" {
+		s.l.Info("saving hotel image metadata", "hotel_id", assetID, "key", actualKey)
+		if _, err := s.db.SaveHotelImage(ctx, assetID, bucket, actualKey, contentType, size); err != nil {
+			s.l.Error("failed to save hotel image metadata", "hotel_id", assetID, "err", err)
 			return nil, err
 		}
-	} else if ownerType == "room" && ownerID != "" {
-		s.l.Info("saving room image metadata", "room_id", ownerID, "key", actualKey)
-		if _, err := s.db.SaveRoomImage(ctx, ownerID, bucket, actualKey, contentType, size); err != nil {
-			s.l.Error("failed to save room image metadata", "room_id", ownerID, "err", err)
+	} else if assetType == "room" && assetID != "" {
+		s.l.Info("saving room image metadata", "room_id", assetID, "key", actualKey)
+		if _, err := s.db.SaveRoomImage(ctx, assetID, bucket, actualKey, contentType, size); err != nil {
+			s.l.Error("failed to save room image metadata", "room_id", assetID, "err", err)
 			return nil, err
 		}
 	} else {
-		s.l.Warn("upload has no owner, metadata not saved", "ownerType", ownerType, "ownerID", ownerID, "key", actualKey)
+		s.l.Warn("upload has no owner, metadata not saved", "ownerType", assetType, "ownerID", assetID, "key", actualKey)
 	}
 
 	s.l.Info("file uploaded", "bucket", bucket, "key", actualKey)

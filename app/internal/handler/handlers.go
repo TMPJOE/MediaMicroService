@@ -61,6 +61,7 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get the file from the form data
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		helper.RespondError(w, http.StatusBadRequest, "missing or invalid 'file' field")
@@ -72,19 +73,7 @@ func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-
-	// Determine owner metadata (optional): hotel_id or room_id
-	ownerType := ""
-	ownerID := ""
-	if hv := r.FormValue("hotel_id"); hv != "" {
-		ownerType = "hotel"
-		ownerID = hv
-	} else if rv := r.FormValue("room_id"); rv != "" {
-		ownerType = "room"
-		ownerID = rv
-	}
-
-	resp, err := h.s.UploadFile(r.Context(), h.bucket, header.Filename, ownerType, ownerID, file, header.Size, contentType)
+	resp, err := h.s.UploadFile(r.Context(), h.bucket, header.Filename, r.FormValue("asset_type"), r.FormValue("asset_id"), file, header.Size, contentType)
 	if err != nil {
 		h.l.Error("uploadFile service error", "err", err)
 		helper.RespondError(w, http.StatusInternalServerError, helper.ErrProcessingFailed.Error())

@@ -2,6 +2,12 @@ package models
 
 import "io"
 
+// UploadRequest is the request body for the file upload endpoint.
+type UploadRequest struct {
+	AssetType string `json:"asset_type"`
+	AssetID   string `json:"asset_id"`
+}
+
 // DownloadResult holds the streaming body and metadata for a downloaded object.
 type DownloadResult struct {
 	Body        io.ReadCloser `json:"-"`

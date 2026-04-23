@@ -43,6 +43,12 @@ func (r *s3HTTPRepo) UploadFile(ctx context.Context, bucketName, objectName stri
 		pw.Close()
 	}()
 
+	// NOTE: The object key is sent as a separate "object_key" form field
+	// because Go's multipart.Reader strips directory components from the
+	// filename in Content-Disposition (it calls filepath.Base internally).
+	// Without this separate field the MinIO service would only receive the
+	// base filename, losing the "hotels/{id}/" prefix.
+
 	url := fmt.Sprintf("%s/upload", r.baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
 	if err != nil {
@@ -71,11 +77,12 @@ func (r *s3HTTPRepo) UploadFile(ctx context.Context, bucketName, objectName stri
 	return result.Key, nil
 }
 
-// DownloadFile retrieves a file from the MinIO service's GET /download/{bucket}/{key} endpoint.
+// DownloadFile retrieves a file from the MinIO service's GET /download/{bucket}/* endpoint.
+// The object key is used as-is since the chi router wildcard captures the full path.
 func (r *s3HTTPRepo) DownloadFile(ctx context.Context, bucketName, objectName string) (*models.DownloadResult, error) {
-	url := fmt.Sprintf("%s/download/%s/%s", r.baseURL, bucketName, objectName)
+	dlURL := fmt.Sprintf("%s/download/%s/%s", r.baseURL, bucketName, objectName)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create download request: %w", err)
 	}
@@ -122,6 +129,7 @@ func (r *s3HTTPRepo) DownloadFile(ctx context.Context, bucketName, objectName st
 }
 
 // BuildDownloadURL returns the relative HTTP URL for downloading an object via the Media service.
+// The object key is used as-is since it's already a valid path segment.
 func (r *s3HTTPRepo) BuildDownloadURL(bucketName, objectName string) string {
 	return fmt.Sprintf("/download/%s/%s", bucketName, objectName)
 }
@@ -139,19 +147,25 @@ func parseContentLength(s string) (int64, error) {
 
 // multipartWriter helps construct a multipart/form-data request body
 // to stream a file to the MinIO service's /upload endpoint.
+// It includes an "object_key" form field so the full S3 key (with prefix
+// path like "hotels/{id}/{ts}-file.jpg") is preserved — Go's multipart
+// reader strips directory components from the filename in
+// Content-Disposition, so the key must travel in a separate field.
 type multipartWriter struct {
-	pw       *io.PipeWriter
-	filename string
-	mime     string
-	file     io.Reader
+	pw        *io.PipeWriter
+	objectKey string // full S3 object key sent as a separate form field
+	filename  string // base filename used in Content-Disposition
+	mime      string
+	file      io.Reader
 }
 
-func newMultipartWriter(pw *io.PipeWriter, filename, mime string, file io.Reader) *multipartWriter {
+func newMultipartWriter(pw *io.PipeWriter, objectKey, mime string, file io.Reader) *multipartWriter {
 	return &multipartWriter{
-		pw:       pw,
-		filename: filename,
-		mime:     mime,
-		file:     file,
+		pw:        pw,
+		objectKey: objectKey,
+		filename:  objectKey, // kept for backward compatibility in Content-Disposition
+		mime:      mime,
+		file:      file,
 	}
 }
 
@@ -162,7 +176,16 @@ func (w *multipartWriter) formContentType() string {
 }
 
 func (w *multipartWriter) write() error {
-	// Write multipart header
+	// 1. Write the object_key form field (preserves full prefix path).
+	keyField := fmt.Sprintf(
+		"--%s\r\nContent-Disposition: form-data; name=\"object_key\"\r\n\r\n%s\r\n",
+		boundary, w.objectKey,
+	)
+	if _, err := io.WriteString(w.pw, keyField); err != nil {
+		return err
+	}
+
+	// 2. Write the file part.
 	header := fmt.Sprintf(
 		"--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n",
 		boundary, w.filename, w.mime,
