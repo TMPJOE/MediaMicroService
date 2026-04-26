@@ -186,25 +186,20 @@ func CacheControl(maxAge int) func(http.Handler) http.Handler {
 	}
 }
 
-// JWTAuthenticator handles JWT authentication
+// JWTAuthenticator handles JWT authentication (validation only)
 type JWTAuthenticator struct {
-	config     JWTConfig
-	publicKey  map[string]*rsa.PublicKey
-	privateKey *rsa.PrivateKey
+	config    JWTConfig
+	publicKey map[string]*rsa.PublicKey
 }
 
 // NewJWTAuthenticator creates a new JWT authenticator
-func NewJWTAuthenticator(config JWTConfig, privateKeyPath, publicKeyPath string) *JWTAuthenticator {
+func NewJWTAuthenticator(config JWTConfig, publicKeyPath string) *JWTAuthenticator {
 	publicKeyData, _ := os.ReadFile(publicKeyPath)
-	privateKeyData, _ := os.ReadFile(privateKeyPath)
-
-	privateKey, _ := jwt.ParseRSAPrivateKeyFromPEM(privateKeyData)
 	publicKey, _ := jwt.ParseRSAPublicKeyFromPEM(publicKeyData)
 
 	return &JWTAuthenticator{
-		config:     config,
-		publicKey:  map[string]*rsa.PublicKey{"key-1": publicKey},
-		privateKey: privateKey,
+		config:    config,
+		publicKey: map[string]*rsa.PublicKey{"key-1": publicKey},
 	}
 }
 
@@ -281,26 +276,6 @@ func (j *JWTAuthenticator) ValidateToken(tokenString string) (*JWTClaims, error)
 	}
 
 	return claims, nil
-}
-
-// GenerateToken generates a new JWT token for a user
-func (j *JWTAuthenticator) GenerateToken(userID, email string) (string, error) {
-	claims := JWTClaims{
-		UserID: userID,
-		Email:  email,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    j.config.Issuer,
-			Audience:  []string{"booking-api"},
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(j.config.Expiration)),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	token.Header["kid"] = "key-1"
-
-	return token.SignedString(j.privateKey)
 }
 
 // CORS middleware
